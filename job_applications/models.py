@@ -8,6 +8,7 @@ class JobApplication(models.Model):
         ('OF', 'Offered'),
         ('RE', 'Rejected'),
     ]
+    JOB_CHOICES = []
 
     company = models.CharField(max_length=100)
     date = models.DateField()
