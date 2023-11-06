@@ -1,0 +1,12 @@
+                              List of databases
+   Name    |   Owner   | Encoding | Collate | Ctype |    Access privileges    
+-----------+-----------+----------+---------+-------+-------------------------
+ job_apps  | postgres  | UTF8     | C       | C     | 
+ map-api   | postgres1 | UTF8     | C       | C     | 
+ postgres  | postgres1 | UTF8     | C       | C     | 
+ template0 | postgres1 | UTF8     | C       | C     | =c/postgres1           +
+           |           |          |         |       | postgres1=CTc/postgres1
+ template1 | postgres1 | UTF8     | C       | C     | =c/postgres1           +
+           |           |          |         |       | postgres1=CTc/postgres1
+(5 rows)
+
