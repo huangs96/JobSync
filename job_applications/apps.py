@@ -1,6 +1,6 @@
 from django.apps import AppConfig
 
 
-class JobSyncConfig(AppConfig):
+class JobApplications(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "JobSync"
+    name = "job_applications"
