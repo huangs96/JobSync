@@ -4,13 +4,9 @@ from .models import JobApplication
 from .form import JobForm
 
 # Create your views here.
-def say_hello(request):
-  form = JobForm()
-  return render(request, "home.html", {'form': form})
-
-# def job_list(request):
-#     jobs = JobApplication.objects.all()
-#     return render(request, 'home.html', {'jobs': jobs})
+def job_list(request):
+    jobList = JobApplication.objects.all().values()
+    return render(request, 'home.html', {'joblist': jobList})
 
 def add_job(request):
     if request.method == 'POST':

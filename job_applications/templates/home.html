@@ -1,5 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
-    <h1>Welcome to My Page</h1>
-    <p>This is the content for my specific page.</p>
+    <h1>Welcome to JobSync</h1>
+    <p>Check out latest scraped jobs</p>
+
+    <h1>Job List</h1>
+    <ul>
+        {% for job in joblist %}
+            <li>
+                <h2>{{ job.title }}</h2>
+                <p>Company: {{ job.company }}</p>
+                <p>Date Posted: {{ job.date_posted }}</p>
+                <p>Date Applied: {{ job.date_applied }}</p>
+                <p>Job Url: {{ job.job_url }}</p>
+                <p>Job Description: {{ job.description }}</p>
+                <p>Application Status: {{ job.application_status }}</p>
+                <!-- Add other job fields as needed -->
+            </li>
+        {% endfor %}
+    </ul>
 {% endblock %}
