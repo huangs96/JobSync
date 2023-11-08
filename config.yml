@@ -1,83 +1,83 @@
-# proxies: {}
+proxies: 
+  'http': 'http://UKwTe4XwweNAs31g:XpBW2uKR1NL88GGH@geo.iproyal.com:12321'
 
-# headers: {}
 
-# OpenAI_API_KEY: ""
+headers:
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36'
 
-# OpenAI_Model: ""
+OpenAI_API_KEY: ""
 
-# resume_path: "full local path to your resume in PDF format"
+OpenAI_Model: ""
 
-# search_queries:
-#   - keywords: "Software Developer"
-#     location: "Canada"
-#     f_WT: ""
-#   - keywords: "Software Engineer"
-#     location: "USA"
-#     f_WT: "2"
+resume_path: "full local path to your resume in PDF format"
 
-# desc_words:
-#   - agriculture
-#   - farm
-#   - food safety
-#   - manufacture
-#   - manufacturing
-#   - Bilingual
-#   - chemistry
-#   - FDA
-#   - ICH Guideline
-#   - 21 CFR 210
-#   - biological sciences
-#   - clinical research
-#   - clinical trials
-#   - drug safety
-#   - ISO 9001
-#   - ISO9001
-#   - Life Sciences
-#   - Biotech
-#   - safety standards
-#   - gt.school
-#   - degree in accounting
-#   - degree in Finance
-#   - ISQM
-#   - ISQM1
-#   - QA/QC
-#   - Electrical Engineering
-#   - IS09001
+search_queries:
+  - keywords: "Software Developer"
+    location: "Canada"
+    f_WT: ""
 
-# title_exclude:
-#   - frontend
-#   - fron end
-#   - game
+desc_words:
+  - agriculture
+  - farm
+  - food safety
+  - manufacture
+  - manufacturing
+  - Bilingual
+  - chemistry
+  - FDA
+  - ICH Guideline
+  - 21 CFR 210
+  - biological sciences
+  - clinical research
+  - clinical trials
+  - drug safety
+  - ISO 9001
+  - ISO9001
+  - Life Sciences
+  - Biotech
+  - safety standards
+  - gt.school
+  - degree in accounting
+  - degree in Finance
+  - ISQM
+  - ISQM1
+  - QA/QC
+  - Electrical Engineering
+  - IS09001
 
-# title_include:
-#   - python
-#   - developer
-#   - backend
-#   - BE
-#   - engineer
+title_exclude:
+  - frontend
+  - fron end
+  - game
 
-# company_exclude:
-#   - ClickJobs.io
+title_include:
+  - python
+  - developer
+  - backend
+  - BE
+  - engineer
 
-# languages:
-#   - en
+company_exclude:
+  - ClickJobs.io
 
-# timespan: "r84600"
+languages:
+  - en
 
-# jobs_tablename: "jobs"
+timespan: "r84600"
 
-# filtered_jobs_tablename: "filtered_jobs"
+jobs_tablename: "jobs"
 
-# db_path: "./data/my_database.db"
+filtered_jobs_tablename: "filtered_jobs"
 
-# pages_to_scrape: 10
+db_path: "./data/my_database.db"
 
-# rounds: 1
+pages_to_scrape: 10
 
-# days_to scrape: 10
+rounds: 1
 
-# app_table: "jobs"
+days_to scrape: 10
+
+app_table: "jobs"
 
 
 # work_preference:
