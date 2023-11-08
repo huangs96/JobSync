@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<form method="post">
+  {% csrf_token %}
+  
+  <div class="form-group">
+    {{ form.title.label_tag }}
+    {{ form.title }}
+  </div>
+
+  <div class="form-group">
+    {{ form.company.label_tag }}
+    {{ form.company }}
+  </div>
+
+  <div class="form-group">
+    {{ form.location.label_tag }}
+    {{ form.location }}
+  </div>
+
+  <div class="form-group">
+    {{ form.date_posted.label_tag }}
+    {{ form.date_posted }}
+  </div>
+
+  <div class="form-group">
+    {{ form.date_applied.label_tag }}
+    {{ form.date_applied }}
+  </div>
+
+  <div class="form-group">
+    {{ form.job_url.label_tag }}
+    {{ form.job_url }}
+  </div>
+
+  <div class="form-group">
+    {{ form.job_description.label_tag }}
+    {{ form.job_description }}
+  </div>
+
+  <div class="form-group">
+    {{ form.application_status.label_tag }}
+    {{ form.application_status }}
+  </div>
+
+  <button type="submit" class="btn btn-primary">Submit</button>
+</form>
+{% endblock %}
