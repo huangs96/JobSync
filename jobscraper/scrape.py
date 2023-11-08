@@ -151,9 +151,11 @@ def safe_detect(text):
         return 'en'
 
 async def scrape():
+  start_time = tm.perf_counter()
+  finalJobList = []
+  
   config = yaml.safe_load(open('/Users/stephenhuang/TheWork/Job-Scraper/config.yml'))
   searchQueries = config['search_queries']
-  print('proxy here', searchQueries)
   for query in searchQueries:
     keywords = quote(query['keywords'])
     location = quote(query['location'])
