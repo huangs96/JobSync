@@ -1,47 +1,105 @@
 import asyncio
-from http.client import HTTPException
-from re import search
+import psycopg2
+import tracemalloc
+import time as tm
 import yaml
 import httpx
+import sqlite3
+from http.client import HTTPException
+from re import search
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 from datetime import datetime, timedelta, time
 from itertools import groupby
 from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
-import psycopg2
-import tracemalloc
-import time as tm
+from django.db import connections
+
 
 # Trace memory usage and allocation
 tracemalloc.start()
 
-async def save_jobs_to_database(jobs):
-    connection = psycopg2.connect(
-        database="job_apps",
-        user="postgres",
-        password="",
-        host="localhost",
-        port="5432"
+def load_config(config_file):
+    with open(config_file, 'r') as stream:
+        return yaml.safe_load(stream)
+
+async def check_for_table(connection_alias, table_name):
+  try:
+    connection = connections[connection_alias]
+    with connection.cursor() as cursor:
+      cursor.execute(f"SELECT to_regclass('public.{table_name}')")
+      return cursor.fetchone()[0] is not None
+  except Exception as e:
+    return False
+
+async def create_table_if_not_exists_sqlite(config, db_path):
+  connection = sqlite3.connect(db_path)
+  cursor = connection.cursor()
+  cursor.execute(f"""
+    CREATE TABLE IF NOT EXISTS {config['jobs_tablename']} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      company TEXT,
+      location TEXT,
+      date_posted DATE,
+      date_applied DATE,
+      job_url TEXT,
+      job_description TEXT,
+      application_status TEXT
     )
+  """)
+  connection.commit()
+  cursor.close()
 
-    cursor = connection.cursor()
+async def connect_to_database(config):
+    database_type = config['db_type']
+    if database_type == 'postgres':
+        conn = psycopg2.connect(
+            database=config['postgres_db_cred']['database'],
+            user=config['postgres_db_cred']['user'],
+            password=config['postgres_db_cred']['password'],
+            host=config['postgres_db_cred']['host'],
+            port=config['postgres_db_cred']['port']
+        )
+    elif database_type == 'sqlite':
+        conn = sqlite3.connect(config['db_path'])
+    else:
+        raise ValueError("Database type currently not supported")
 
-    for job in jobs:
-        query = """
-            INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        date_posted = job.get('date')
-        if date_posted is not None:
-          values = (job['title'], job['company'],job['location'], date_posted, job['job_url'], job['job_description'])
-        else:
-          date_default = datetime.now().date()
-          values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'])
-        cursor.execute(query, values)
-    connection.commit()
-    cursor.close()
-    connection.close()
+    cursor = conn.cursor()
+    
+    return conn, cursor
+
+
+async def save_jobs_to_database(jobs, config):
+  conn, cursor = await connect_to_database(config)
+  database_type = config['db_type']
+  for job in jobs:
+    if database_type == 'postgres':
+      query = f"""
+          INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
+          VALUES (%s, %s, %s, %s, %s, %s)
+      """
+    elif database_type == 'sqlite':
+      query = """
+              INSERT INTO job_applications_jobapplication (title, company, location, date_posted, date_applied, job_url, job_description, application_status)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          """
+    
+    date_posted = job.get('date')
+    date_applied = job.get('date_applied', datetime.now().date())
+
+    if date_posted is not None:
+        values = (job['title'], job['company'], job['location'], date_posted, job['job_url'], job['job_description'], date_applied)
+    else:
+        date_default = datetime.now().date()
+        values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'], date_applied)
+    
+    cursor.execute(query, values)
+
+  conn.commit()
+  cursor.close()
+  conn.close()
 
 async def getWithRetries(url, config, retries=3, delay=1):
     for i in range(retries):
@@ -150,22 +208,40 @@ def safe_detect(text):
     except LangDetectException:
         return 'en'
 
+async def filter_jobs(all_jobs, config):
+    jobs_tablename = config['jobs_tablename']
+    
+    conn, cursor = await connect_to_database(config)
+    
+    filtered_joblist = []
+    
+    if table_exists(conn, jobs_tablename):
+        for job in all_jobs:
+            query = f"SELECT 1 FROM {jobs_tablename} WHERE job_id = %s"
+            cursor.execute(query, (job['job_id'],))
+            if not cursor.fetchone():
+                filtered_joblist.append(job)
+
+    conn.close()
+
+    return filtered_joblist
+
 async def scrape():
   start_time = tm.perf_counter()
-  finalJobList = []
-  
-  config = yaml.safe_load(open('/Users/stephenhuang/TheWork/Job-Scraper/config.yml'))
+
+  config = load_config('/Users/stephenhuang/TheWork/JobSync/config.yml')
+
   searchQueries = config['search_queries']
   for query in searchQueries:
     keywords = quote(query['keywords'])
     location = quote(query['location'])
-    print(f"keywords: {keywords}", f"location:{location}")
+    
     for i in range(0, config['pages_to_scrape']):
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
         result = await getWithRetries(url, config)
         parsedResult = await parseJobList(result)
-        
-        await save_jobs_to_database(parsedResult)
+        finalJobList = await filter_jobs(parsedResult)
+        await save_jobs_to_database(finalJobList, config)
         current, peak = tracemalloc.get_traced_memory()
         print(f"Current memory usage: {current / 10**6} MB")
         print(f"Peak memory usage: {peak / 10**6} MB")
