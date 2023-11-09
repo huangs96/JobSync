@@ -23,18 +23,18 @@ def load_config(config_file):
     with open(config_file, 'r') as stream:
         return yaml.safe_load(stream)
 
-async def check_for_table(connection_alias, table_name):
+async def check_for_table(conn_alias, table_name):
   try:
-    connection = connections[connection_alias]
-    with connection.cursor() as cursor:
+    conn = connections[conn_alias]
+    with conn.cursor() as cursor:
       cursor.execute(f"SELECT to_regclass('public.{table_name}')")
       return cursor.fetchone()[0] is not None
   except Exception as e:
     return False
 
 async def create_table_if_not_exists_sqlite(config, db_path):
-  connection = sqlite3.connect(db_path)
-  cursor = connection.cursor()
+  conn = sqlite3.connect(db_path)
+  cursor = conn.cursor()
   cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS {config['jobs_tablename']} (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,7 +48,7 @@ async def create_table_if_not_exists_sqlite(config, db_path):
       application_status TEXT
     )
   """)
-  connection.commit()
+  conn.commit()
   cursor.close()
 
 async def connect_to_database(config):
@@ -72,34 +72,38 @@ async def connect_to_database(config):
 
 
 async def save_jobs_to_database(jobs, config):
-  conn, cursor = await connect_to_database(config)
-  database_type = config['db_type']
-  for job in jobs:
-    if database_type == 'postgres':
-      query = f"""
-          INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
-          VALUES (%s, %s, %s, %s, %s, %s)
-      """
-    elif database_type == 'sqlite':
-      query = """
-              INSERT INTO job_applications_jobapplication (title, company, location, date_posted, date_applied, job_url, job_description, application_status)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-          """
-    
-    date_posted = job.get('date')
-    date_applied = job.get('date_applied', datetime.now().date())
+    conn, cursor = await connect_to_database(config)
+    database_type = config['db_type']
 
-    if date_posted is not None:
-        values = (job['title'], job['company'], job['location'], date_posted, job['job_url'], job['job_description'], date_applied)
-    else:
-        date_default = datetime.now().date()
-        values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'], date_applied)
-    
-    cursor.execute(query, values)
+    for job in jobs:
+        if database_type == 'postgres':
+            query = """
+                INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            date_posted = job.get('date')
+            date_applied = datetime.now().date()
+            if date_posted is not None:
+                values = (job['title'], job['company'], job['location'], date_posted, job['job_url'], job['job_description'])
+            else:
+                date_default = datetime.now().date()
+                values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'])
 
-  conn.commit()
-  cursor.close()
-  conn.close()
+        elif database_type == 'sqlite':
+            query = """
+                INSERT INTO job_applications_jobapplication (title, company, location, date_posted, date_applied, job_url, job_description, application_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            date_posted = job.get('date')
+            date_applied = job.get('date_applied', datetime.now().date())
+            values = (job['title'], job['company'], job['location'], date_posted, date_applied, job['job_url'], job['job_description'], job['application_status'])
+
+        cursor.execute(query, values)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 
 async def getWithRetries(url, config, retries=3, delay=1):
     for i in range(retries):
@@ -214,11 +218,18 @@ async def filter_jobs(all_jobs, config):
     conn, cursor = await connect_to_database(config)
     
     filtered_joblist = []
+    days_to_scrape = config.get('days_to_scrape', 3)
     
-    if table_exists(conn, jobs_tablename):
+    if await check_for_table(conn, jobs_tablename):
         for job in all_jobs:
-            query = f"SELECT 1 FROM {jobs_tablename} WHERE job_id = %s"
-            cursor.execute(query, (job['job_id'],))
+            job_date = convert_date_format(job['date'])
+            job_date = datetime.combine(date_post, time())
+
+            if job_date < datetime.now() - timedelta(days=days_to_scrape):
+                continue
+
+            query = f"SELECT 1 FROM {jobs_tablename} WHERE job_url = %s"
+            cursor.execute(query, (job['job_url'],))
             if not cursor.fetchone():
                 filtered_joblist.append(job)
 
@@ -229,7 +240,7 @@ async def filter_jobs(all_jobs, config):
 async def scrape():
   start_time = tm.perf_counter()
 
-  config = load_config(config['config_path'])
+  config = load_config('/Users/stephenhuang/TheWork/JobSync/config.yml')
 
   searchQueries = config['search_queries']
   for query in searchQueries:
@@ -240,7 +251,8 @@ async def scrape():
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
         result = await getWithRetries(url, config)
         parsedResult = await parseJobList(result)
-        finalJobList = await filter_jobs(parsedResult)
+        print(parsedResult)
+        finalJobList = await filter_jobs(parsedResult, config)
         await save_jobs_to_database(finalJobList, config)
         current, peak = tracemalloc.get_traced_memory()
         print(f"Current memory usage: {current / 10**6} MB")
