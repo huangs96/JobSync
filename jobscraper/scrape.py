@@ -1,22 +1,59 @@
 import asyncio
-from http.client import HTTPException
-from re import search
+import psycopg2
+import tracemalloc
+import time as tm
 import yaml
 import httpx
+import sqlite3
+from http.client import HTTPException
+from re import search
 from bs4 import BeautifulSoup
 from urllib.parse import quote
 from datetime import datetime, timedelta, time
 from itertools import groupby
 from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
-import psycopg2
-import tracemalloc
-import time as tm
+from django.db import connections
+
 
 # Trace memory usage and allocation
 tracemalloc.start()
 
-async def save_jobs_to_database(jobs):
+def load_config(config_file):
+    with open(config_file, 'r') as stream:
+        return yaml.safe_load(stream)
+
+async def check_for_table(connection_alias, table_name):
+  try:
+    connection = connections[connection_alias]
+    with connection.cursor() as cursor:
+      cursor.execute(f"SELECT to_regclass('public.{table_name}')")
+      return cursor.fetchone()[0] is not None
+  except Exception as e:
+    return False
+
+async def create_table_if_not_exists_sqlite(config, db_path):
+  connection = sqlite3.connect(db_path)
+  cursor = connection.cursor()
+  cursor.execute(f"""
+    CREATE TABLE IF NOT EXISTS {config['jobs_tablename']} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT,
+      company TEXT,
+      location TEXT,
+      date_posted DATE,
+      date_applied DATE,
+      job_url TEXT,
+      job_description TEXT,
+      application_status TEXT
+    )
+  """)
+  connection.commit()
+  cursor.close()
+
+async def save_jobs_to_database(jobs, config):
+  database_type = config['db_type']
+  if database_type == 'postgres':
     connection = psycopg2.connect(
         database="job_apps",
         user="postgres",
@@ -24,24 +61,39 @@ async def save_jobs_to_database(jobs):
         host="localhost",
         port="5432"
     )
+  elif database_type == 'sqlite':
+    connection = sqlite3.connect(config['db_path'])
+  else:
+    raise ValueError("Database type currently not supported")
 
-    cursor = connection.cursor()
+  cursor = connection.cursor()
 
-    for job in jobs:
-        query = """
-            INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """
-        date_posted = job.get('date')
-        if date_posted is not None:
-          values = (job['title'], job['company'],job['location'], date_posted, job['job_url'], job['job_description'])
-        else:
-          date_default = datetime.now().date()
-          values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'])
-        cursor.execute(query, values)
-    connection.commit()
-    cursor.close()
-    connection.close()
+  for job in jobs:
+    if database_type == 'postgres':
+      query = f"""
+          INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
+          VALUES (%s, %s, %s, %s, %s, %s)
+      """
+    elif database_type == 'sqlite':
+      query = """
+              INSERT INTO job_applications_jobapplication (title, company, location, date_posted, date_applied, job_url, job_description, application_status)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          """
+    
+    date_posted = job.get('date')
+    date_applied = job.get('date_applied', datetime.now().date())
+
+    if date_posted is not None:
+        values = (job['title'], job['company'], job['location'], date_posted, job['job_url'], job['job_description'], date_applied)
+    else:
+        date_default = datetime.now().date()
+        values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'], date_applied)
+    
+    cursor.execute(query, values)
+
+  connection.commit()
+  cursor.close()
+  connection.close()
 
 async def getWithRetries(url, config, retries=3, delay=1):
     for i in range(retries):
@@ -150,22 +202,40 @@ def safe_detect(text):
     except LangDetectException:
         return 'en'
 
+# REPLACE WITH CURRENT DATABASE INFORMATION
+def find_new_jobs(all_jobs, conn, config):
+    # From all_jobs, find the jobs that are not already in the database. Function checks both the jobs and filtered_jobs tables.
+    jobs_tablename = config['jobs_tablename']
+    filtered_jobs_tablename = config['filtered_jobs_tablename']
+    jobs_db = pd.DataFrame()
+    filtered_jobs_db = pd.DataFrame()    
+    if conn is not None:
+        if table_exists(conn, jobs_tablename):
+            query = f"SELECT * FROM {jobs_tablename}"
+            jobs_db = pd.read_sql_query(query, conn)
+        if table_exists(conn, filtered_jobs_tablename):
+            query = f"SELECT * FROM {filtered_jobs_tablename}"
+            filtered_jobs_db = pd.read_sql_query(query, conn)
+
+    new_joblist = [job for job in all_jobs if not job_exists(jobs_db, job) and not job_exists(filtered_jobs_db, job)]
+    return new_joblist
+
 async def scrape():
   start_time = tm.perf_counter()
   finalJobList = []
-  
-  config = yaml.safe_load(open('/Users/stephenhuang/TheWork/Job-Scraper/config.yml'))
+
+  config = load_config('/Users/stephenhuang/TheWork/JobSync/config.yml')
   searchQueries = config['search_queries']
   for query in searchQueries:
     keywords = quote(query['keywords'])
     location = quote(query['location'])
-    print(f"keywords: {keywords}", f"location:{location}")
+    
     for i in range(0, config['pages_to_scrape']):
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
         result = await getWithRetries(url, config)
         parsedResult = await parseJobList(result)
         
-        await save_jobs_to_database(parsedResult)
+        await save_jobs_to_database(parsedResult, config)
         current, peak = tracemalloc.get_traced_memory()
         print(f"Current memory usage: {current / 10**6} MB")
         print(f"Peak memory usage: {peak / 10**6} MB")
