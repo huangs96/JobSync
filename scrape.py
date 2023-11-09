@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, time
 from itertools import groupby
 from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
-from django.db import connections
+from django.db import connection
+from asgiref.sync import sync_to_async
 
 
 # Trace memory usage and allocation
@@ -23,14 +24,18 @@ def load_config(config_file):
     with open(config_file, 'r') as stream:
         return yaml.safe_load(stream)
 
-async def check_for_table(conn_alias, table_name):
-  try:
-    conn = connections[conn_alias]
-    with conn.cursor() as cursor:
-      cursor.execute(f"SELECT to_regclass('public.{table_name}')")
-      return cursor.fetchone()[0] is not None
-  except Exception as e:
-    return False
+@sync_to_async
+def check_for_table(table_name):
+    conn = connection.cursor()
+    print('check_for_table', conn)
+    try:
+        with connection.cursor() as cursor:
+            query = f"SELECT to_regclass('public.{table_name}')"
+            print(query)  # Add this line to see the query
+            cursor.execute(query)
+            return cursor.fetchone()[0] is not None
+    except Exception as e:
+        return False
 
 async def create_table_if_not_exists_sqlite(config, db_path):
   conn = sqlite3.connect(db_path)
@@ -218,14 +223,20 @@ async def filter_jobs(all_jobs, config):
     conn, cursor = await connect_to_database(config)
     
     filtered_joblist = []
-    days_to_scrape = config.get('days_to_scrape', 3)
+    days_to_scrape = config.get('days_to_scrape')
+    print('days to scrape', days_to_scrape)
+    check = check_for_table(jobs_tablename)
+    print('check for table', check)
     
-    if await check_for_table(conn, jobs_tablename):
+    if check_for_table(jobs_tablename):
+        print('here2222---------------')
         for job in all_jobs:
             job_date = convert_date_format(job['date'])
-            job_date = datetime.combine(date_post, time())
+            job_date = datetime.combine(job_date, time())
+            print(job_date)
 
             if job_date < datetime.now() - timedelta(days=days_to_scrape):
+                print('recentjob')
                 continue
 
             query = f"SELECT 1 FROM {jobs_tablename} WHERE job_url = %s"
@@ -253,6 +264,7 @@ async def scrape():
         parsedResult = await parseJobList(result)
         print(parsedResult)
         finalJobList = await filter_jobs(parsedResult, config)
+        print(finalJobList)
         await save_jobs_to_database(finalJobList, config)
         current, peak = tracemalloc.get_traced_memory()
         print(f"Current memory usage: {current / 10**6} MB")
