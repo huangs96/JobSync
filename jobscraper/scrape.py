@@ -51,23 +51,29 @@ async def create_table_if_not_exists_sqlite(config, db_path):
   connection.commit()
   cursor.close()
 
+async def connect_to_database(config):
+    database_type = config['db_type']
+    if database_type == 'postgres':
+        conn = psycopg2.connect(
+            database=config['postgres_db_cred']['database'],
+            user=config['postgres_db_cred']['user'],
+            password=config['postgres_db_cred']['password'],
+            host=config['postgres_db_cred']['host'],
+            port=config['postgres_db_cred']['port']
+        )
+    elif database_type == 'sqlite':
+        conn = sqlite3.connect(config['db_path'])
+    else:
+        raise ValueError("Database type currently not supported")
+
+    cursor = conn.cursor()
+    
+    return conn, cursor
+
+
 async def save_jobs_to_database(jobs, config):
+  conn, cursor = await connect_to_database(config)
   database_type = config['db_type']
-  if database_type == 'postgres':
-    connection = psycopg2.connect(
-        database="job_apps",
-        user="postgres",
-        password="",
-        host="localhost",
-        port="5432"
-    )
-  elif database_type == 'sqlite':
-    connection = sqlite3.connect(config['db_path'])
-  else:
-    raise ValueError("Database type currently not supported")
-
-  cursor = connection.cursor()
-
   for job in jobs:
     if database_type == 'postgres':
       query = f"""
@@ -91,9 +97,9 @@ async def save_jobs_to_database(jobs, config):
     
     cursor.execute(query, values)
 
-  connection.commit()
+  conn.commit()
   cursor.close()
-  connection.close()
+  conn.close()
 
 async def getWithRetries(url, config, retries=3, delay=1):
     for i in range(retries):
@@ -203,28 +209,31 @@ def safe_detect(text):
         return 'en'
 
 # REPLACE WITH CURRENT DATABASE INFORMATION
-def find_new_jobs(all_jobs, conn, config):
+def find_new_jobs(all_jobs, config):
     # From all_jobs, find the jobs that are not already in the database. Function checks both the jobs and filtered_jobs tables.
     jobs_tablename = config['jobs_tablename']
-    filtered_jobs_tablename = config['filtered_jobs_tablename']
-    jobs_db = pd.DataFrame()
-    filtered_jobs_db = pd.DataFrame()    
-    if conn is not None:
+    database_type = config['db_type']
+    if database_type == 'postgres':
+        conn = psycopg2.connect(
+            
+        )
+    filtered_joblist = []
+    with conn.cursor() as cursor:
         if table_exists(conn, jobs_tablename):
-            query = f"SELECT * FROM {jobs_tablename}"
-            jobs_db = pd.read_sql_query(query, conn)
-        if table_exists(conn, filtered_jobs_tablename):
-            query = f"SELECT * FROM {filtered_jobs_tablename}"
-            filtered_jobs_db = pd.read_sql_query(query, conn)
-
-    new_joblist = [job for job in all_jobs if not job_exists(jobs_db, job) and not job_exists(filtered_jobs_db, job)]
-    return new_joblist
+            for job in all_jobs:
+                query = f"SELECT 1 FROM {jobs_tablename} WHERE job_id = %s"
+                cursor.execute(query, (job['job_id'],))
+                if not cursor.fetchone():
+                    filtered_joblist.append(job)
+    return filtered_joblist
 
 async def scrape():
   start_time = tm.perf_counter()
   finalJobList = []
 
   config = load_config('/Users/stephenhuang/TheWork/JobSync/config.yml')
+#   if config['db_type'] == 'postgres':
+#       conn = psycopg2.connect
   searchQueries = config['search_queries']
   for query in searchQueries:
     keywords = quote(query['keywords'])
