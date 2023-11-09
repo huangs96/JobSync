@@ -229,7 +229,7 @@ async def filter_jobs(all_jobs, config):
 async def scrape():
   start_time = tm.perf_counter()
 
-  config = load_config('/Users/stephenhuang/TheWork/JobSync/config.yml')
+  config = load_config(config['config_path'])
 
   searchQueries = config['search_queries']
   for query in searchQueries:
