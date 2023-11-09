@@ -208,32 +208,29 @@ def safe_detect(text):
     except LangDetectException:
         return 'en'
 
-# REPLACE WITH CURRENT DATABASE INFORMATION
-def find_new_jobs(all_jobs, config):
-    # From all_jobs, find the jobs that are not already in the database. Function checks both the jobs and filtered_jobs tables.
+async def filter_jobs(all_jobs, config):
     jobs_tablename = config['jobs_tablename']
-    database_type = config['db_type']
-    if database_type == 'postgres':
-        conn = psycopg2.connect(
-            
-        )
+    
+    conn, cursor = await connect_to_database(config)
+    
     filtered_joblist = []
-    with conn.cursor() as cursor:
-        if table_exists(conn, jobs_tablename):
-            for job in all_jobs:
-                query = f"SELECT 1 FROM {jobs_tablename} WHERE job_id = %s"
-                cursor.execute(query, (job['job_id'],))
-                if not cursor.fetchone():
-                    filtered_joblist.append(job)
+    
+    if table_exists(conn, jobs_tablename):
+        for job in all_jobs:
+            query = f"SELECT 1 FROM {jobs_tablename} WHERE job_id = %s"
+            cursor.execute(query, (job['job_id'],))
+            if not cursor.fetchone():
+                filtered_joblist.append(job)
+
+    conn.close()
+
     return filtered_joblist
 
 async def scrape():
   start_time = tm.perf_counter()
-  finalJobList = []
 
   config = load_config('/Users/stephenhuang/TheWork/JobSync/config.yml')
-#   if config['db_type'] == 'postgres':
-#       conn = psycopg2.connect
+
   searchQueries = config['search_queries']
   for query in searchQueries:
     keywords = quote(query['keywords'])
@@ -243,8 +240,8 @@ async def scrape():
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
         result = await getWithRetries(url, config)
         parsedResult = await parseJobList(result)
-        
-        await save_jobs_to_database(parsedResult, config)
+        finalJobList = await filter_jobs(parsedResult)
+        await save_jobs_to_database(finalJobList, config)
         current, peak = tracemalloc.get_traced_memory()
         print(f"Current memory usage: {current / 10**6} MB")
         print(f"Peak memory usage: {peak / 10**6} MB")
