@@ -15,6 +15,9 @@ from langdetect import detect
 from langdetect.lang_detect_exception import LangDetectException
 from django.db import connection
 from asgiref.sync import sync_to_async
+from helpers import scrape_helpers as scraperhelper
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
 
 # Trace memory usage and allocation
@@ -24,6 +27,13 @@ def load_config(config_file):
     with open(config_file, 'r') as stream:
         return yaml.safe_load(stream)
         
+
+def safe_detect(text):
+    try:
+        return detect(text)
+    except LangDetectException:
+        return 'en'
+
 
 @sync_to_async
 def check_for_table(table_name):
@@ -51,7 +61,8 @@ async def create_table_if_not_exists_sqlite(config, db_path):
       date_applied DATE,
       job_url TEXT,
       job_description TEXT,
-      application_status TEXT
+      application_status TEXT,
+      date_added_to_db DATE
     )
   """)
   conn.commit()
@@ -127,71 +138,79 @@ async def parseJobList(content):
     return joblist
 
 
-async def transform_job(content):
-    div = content.find('div', class_='description__text description__text--rich')
-    if div:
-        # Remove unwanted elements
-        for element in div.find_all(['span', 'a']):
-            element.decompose()
 
-        # Replace bullet points
-        for ul in div.find_all('ul'):
-            for li in ul.find_all('li'):
-                li.insert(0, '-')
+async def extract_job_description(content):
+    """
+    Extract job description from HTML content.
+    
+    Parameters:
+        content (str): HTML content of the job listing.
+        
+    Returns:
+        str: Extracted job description.
+    """
+    print('content before if statement---', type(content))
+    if content is not None and isinstance(content, BeautifulSoup):
+        description_div = content.find('div', class_='description__text description__text--rich')
 
-        text = div.get_text(separator='\n').strip()
-        text = text.replace('\n\n', '')
-        text = text.replace('::marker', '-')
-        text = text.replace('-\n', '- ')
-        text = text.replace('Show less', '').replace('Show more', '')
-        return text
+        if description_div:
+            # Extract text from the description div
+            description_text = description_div.get_text(separator='\n').strip()
+            return description_text
+        else:
+            return "Could not find Job Description"
     else:
-        return "Could not find Job Description"
+        return "Invalid HTML content"
+
+
+def filter_job_by_language(job, config):
+  return (
+      scraperhelper.is_valid_description(job['job_description']) and
+      safe_detect(job['job_description']) in config['languages']
+  )
 
 
 def remove_irrelevant_jobs(joblist, config):
-    #Filter out jobs based on description, title, and language. Set up in config.json.
-
-    #Changed format to check if return is none
-    
+    print('Original job list:', joblist)
     new_joblist = [
-        job for job in joblist
-        if job['job_description'] is not None and
-           not any(word.lower() in job['job_description'].lower() for word in config['desc_words'])
+        {
+            **job,  # Use the original job dictionary
+        }
+        for job in joblist
+        if (
+            scraperhelper.filter_job_by_description(job, config) and
+            scraperhelper.filter_job_by_title(job, config) and
+            scraperhelper.filter_job_by_company(job, config) and
+            filter_job_by_language(job, config)
+        )
     ]
-
-    new_joblist = [
-        job for job in new_joblist
-        if job['title'] is not None and
-           not any(word.lower() in job['title'].lower() for word in config['title_exclude'])
-    ] if len(config['title_exclude']) > 0 else new_joblist
-
-    new_joblist = [
-        job for job in new_joblist
-        if job['title'] is not None and
-           any(word.lower() in job['title'].lower() for word in config['title_include'])
-    ] if len(config['title_include']) > 0 else new_joblist
-
-    new_joblist = [
-        job for job in new_joblist
-        if job['job_description'] is not None and
-           safe_detect(job['job_description']) in config['languages']
-    ] if len(config['languages']) > 0 else new_joblist
-
-    new_joblist = [
-        job for job in new_joblist
-        if job['company'] is not None and
-           not any(word.lower() in job['company'].lower() for word in config['company_exclude'])
-    ] if len(config['company_exclude']) > 0 else new_joblist
-
+    # print('Original job list:', joblist)
+    print('Filtered job list:', new_joblist)
     return new_joblist
 
 
-def remove_duplicates(joblist, config):
-    # Remove duplicate jobs in the joblist. Duplicate is defined as having the same title and company.
-    joblist.sort(key=lambda x: (x['title'], x['company']))
-    joblist = [next(g) for k, g in groupby(joblist, key=lambda x: (x['title'], x['company']))]
-    return joblist
+def filter_and_replace_description(job_list, config):
+    # print('original job list----', job_list)
+    filtered_jobs = []
+
+    for job in job_list:
+        # Filter by job description
+        found_words = [word.lower() for word in config['desc_words'] if word.lower() in job['job_description'].lower()]
+        if not config['desc_words'] or found_words:
+            # Filter by title
+            title_check = True
+            if config['title_exclude']:
+                title_check = all(word.lower() not in job['title'].lower() for word in config['title_exclude'])
+            if config['title_include']:
+                title_check = title_check and any(word.lower() in job['title'].lower() for word in config['title_include'])
+
+            if title_check:
+                # Replace job description with found words
+                job['job_description'] = ', '.join(found_words)
+                filtered_jobs.append(job)
+
+    return filtered_jobs
+
 
 
 def convert_date_format(date_string):
@@ -213,48 +232,45 @@ def convert_date_format(date_string):
         return None
 
 
-def safe_detect(text):
-    try:
-        return detect(text)
-    except LangDetectException:
-        return 'en'
-
-
 async def filter_jobs(all_jobs, config):
-    jobs_tablename = config['jobs_tablename']
+  jobs_tablename = config['jobs_tablename']
 
-    print("Before connect_to_database")
-    conn, cursor = await connect_to_database(config)
-    print("After connect_to_database")
+  print("Before connect_to_database")
+  conn, cursor = await connect_to_database(config)
+  print("After connect_to_database")
 
-    filtered_joblist = []
-    days_to_scrape = config.get('days_to_scrape')
-    
-    if await check_for_table(jobs_tablename):
-      print('it got here')
-      for job in all_jobs:
-          job['job_description'] = await getWithRetries(job['job_url'], config)
-          print('it got here 2')
-          job_date = convert_date_format(job['date'])
-          job_date = datetime.combine(job_date, time())
+  filtered_joblist = []
+  days_to_scrape = config.get('days_to_scrape')
+  
+  if await check_for_table(jobs_tablename):
+    for job in all_jobs:
+        parsedJobUrlHTML = await getWithRetries(job['job_url'], config)
+        job_description = await extract_job_description(parsedJobUrlHTML)
+        print('it got here 2 - after checking for table')
+        job_date = convert_date_format(job['date'])
+        job_date = datetime.combine(job_date, time())
 
-          if job_date < datetime.now() - timedelta(days=days_to_scrape):
-            continue
+        if job_date < datetime.now() - timedelta(days=days_to_scrape) and job['job_description'] is not None:
+          continue
 
-          if safe_detect(job['job_description'].text) not in config['languages']:
-            print('it got here 3')
-            continue
+        # if safe_detect(job['job_description'].text) not in config['languages']:
+        #   print('it got here 3 - safe detect')
+        #   continue
 
-          query = f"SELECT 1 FROM {jobs_tablename} WHERE job_url = %s"
-          cursor.execute(query, (job['job_url'],))
-          if not cursor.fetchone():
-              filtered_joblist.append(job)
+        query = f"SELECT 1 FROM {jobs_tablename} WHERE job_url = %s"
+        cursor.execute(query, (job['job_url'],))
+        if not cursor.fetchone():
+            job['job_description'] = job_description
+            print('job descripton inside cursor.fetchone():', job['job_description'])
+            print('appending to filtered_joblist')
+            filtered_joblist.append(job)
 
-    conn.close()
+  conn.close()
 
-    finalJobList = remove_irrelevant_jobs(filtered_joblist, config)
-    print('it got here 3')
-    return finalJobList
+  print('filtered_job list before filter_and_replace --------', filtered_joblist)
+  finalJobList = filter_and_replace_description(filtered_joblist, config)
+  print('it got here final', finalJobList)
+  return finalJobList
 
 
 async def save_jobs_to_database(jobs, config):
@@ -264,16 +280,16 @@ async def save_jobs_to_database(jobs, config):
     for job in jobs:
         if database_type == 'postgres':
             query = """
-                INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO job_applications_jobapplication (title, company, location, date_posted, job_url, job_description, date_added_to_db)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
             date_posted = job.get('date')
-            date_applied = datetime.now().date()
+            date_default = datetime.now().date()
             if date_posted is not None:
-                values = (job['title'], job['company'], job['location'], date_posted, job['job_url'], job['job_description'])
+                values = (job['title'], job['company'], job['location'], date_posted, job['job_url'], job['job_description'], date_default)
             else:
                 date_default = datetime.now().date()
-                values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'])
+                values = (job['title'], job['company'], job['location'], date_default, job['job_url'], job['job_description'], date_default)
 
         elif database_type == 'sqlite':
             query = """
@@ -281,8 +297,8 @@ async def save_jobs_to_database(jobs, config):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """
             date_posted = job.get('date')
-            date_applied = job.get('date_applied', datetime.now().date())
-            values = (job['title'], job['company'], job['location'], date_posted, date_applied, job['job_url'], job['job_description'], job['application_status'])
+            date_default = job.get('date_applied', datetime.now().date())
+            values = (job['title'], job['company'], job['location'], date_posted, date_default, job['job_url'], job['job_description'], job['application_status'], date_default)
 
         cursor.execute(query, values)
 
@@ -305,9 +321,10 @@ async def scrape():
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
         result = await getWithRetries(url, config)
         parsedResult = await parseJobList(result)
+        # print('parsedResult------', parsedResult)
         finalJobList = await filter_jobs(parsedResult, config)
-        print(finalJobList)
-        # await save_jobs_to_database(finalJobList, config)
+        print('final job list for database------', finalJobList)
+        await save_jobs_to_database(finalJobList, config)
         current, peak = tracemalloc.get_traced_memory()
         print(f"Current memory usage: {current / 10**6} MB")
         print(f"Peak memory usage: {peak / 10**6} MB")

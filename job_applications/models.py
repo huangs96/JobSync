@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 # Create your models here.
 class JobApplication(models.Model):
@@ -6,6 +7,7 @@ class JobApplication(models.Model):
     title = models.CharField(max_length=100)
     company = models.CharField(max_length=100)
     location = models.CharField(max_length=100)
+    date_added_to_db = models.DateTimeField(default=timezone.now)
     date_posted = models.DateField()
     date_applied = models.DateField()
     job_url = models.CharField(max_length=100)

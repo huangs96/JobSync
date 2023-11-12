@@ -1,18 +1,21 @@
+<!-- templates/job_list.html -->
+
 {% extends "base.html" %}
 {% block content %}
     <h1>Welcome to JobSync</h1>
-    <p>Check out latest scraped jobs</p>
+    <p>Check out the latest scraped jobs based on your configurations</p>
 
-    <h1>Job List</h1>
-    <ul>
-        {% for job in joblist %}
-            <li>
+    <h1 class="mt-4">Job List</h1>
+    <ul class="list-group">
+        {% for job in joblist reversed %}
+            <li class="list-group-item">
                 <h2>{{ job.title }}</h2>
                 <p>Company: {{ job.company }}</p>
+                <p>Date Added: {{ job.date_added_to_db|date:"M. j, Y" }}</p>
                 <p>Date Posted: {{ job.date_posted }}</p>
                 <p>Date Applied: {{ job.date_applied }}</p>
-                <p>Job Url: {{ job.job_url }}</p>
-                <p>Job Description: {{ job.description }}</p>
+                <p>Job Url: <a href="{{ job.job_url }}" target="_blank">{{ job.job_url }}</a></p>
+                <p>Job Description: {{ job.job_description }}</p>
                 <p>Application Status: {{ job.application_status }}</p>
                 <!-- Add other job fields as needed -->
             </li>
