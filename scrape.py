@@ -321,7 +321,6 @@ async def scrape():
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keywords}&location={location}&f_TPR=&f_WT={query['f_WT']}&geoId=&f_TPR={config['timespan']}&start={25*i}"
         result = await getWithRetries(url, config)
         parsedResult = await parseJobList(result)
-        # print('parsedResult------', parsedResult)
         finalJobList = await filter_jobs(parsedResult, config)
         print('final job list for database------', finalJobList)
         await save_jobs_to_database(finalJobList, config)
